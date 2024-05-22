@@ -2,19 +2,13 @@ name: Native Image
 
 on:
   push:
-  workflow_dispatch:
-    inputs:
-      release-version:
-        required: true
-        type: string
-  workflow_call:
-    inputs:
-      release-version:
-        required: true
-        type: string
+    branches:
+      - master
+permissions:
+  contents: write
 
 jobs:
-  build_non_win_images:
+  build-native:
     name: 'Build Native Image ${{ matrix.platform }}'
     strategy:
       matrix:
@@ -35,4 +29,28 @@ jobs:
           distribution: 'liberica'
           java-version: '22'
       - run: ./gradlew plantuml-gplv2:nativeCompile
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: plantuml-native-${{ matrix.platform }}
+          path: plantuml-gplv2/build/native/nativeCompile
+  release-native:
+    needs: build-native
+    name: Release binaries
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download All Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: plantuml
+          pattern: plantuml-native-*
+          merge-multiple: true
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: plantuml
+          name: latest
+          make_latest: true
+          tag_name: latest
+
 
