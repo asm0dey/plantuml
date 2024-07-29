@@ -1,11 +1,10 @@
 name: Native Image
 
 on:
-  workflow_call:
-    inputs:
-      release-version:
-        required: true
-        type: string
+  workflow_dispatch:
+  push:
+    branches:
+      - master
 
 jobs:
   build_non_win_images:
@@ -17,7 +16,7 @@ jobs:
           - os: 'ubuntu-latest'
             platform: 'linux-amd64'
           - os: 'macos-latest'
-            platform: 'darwin-amd64'
+            platform: 'darwin-arm64'
           - os: 'windows-latest'
             platform: 'win-amd64'
     runs-on: ${{matrix.os}}
@@ -27,34 +26,54 @@ jobs:
 
       - uses: graalvm/setup-graalvm@v1
         with:
-          version: '22.3.1'
-          java-version: '17'
-          components: 'native-image'
+          java-version: '21'
           github-token: ${{ secrets.GITHUB_TOKEN }}
+          distribution: liberica
+          cache: gradle
 
       - uses: actions/cache/restore@v4
         with:
           path: |
             build/libs
             build/publications
-            plantuml-asl/build/libs
-            plantuml-bsd/build/libs
-            plantuml-epl/build/libs
-            plantuml-lgpl/build/libs
-            plantuml-mit/build/libs
             plantuml-gplv2/build/libs
           key: "libs-${{ github.run_id }}"
-          fail-on-cache-miss: true
+          fail-on-cache-miss: false
           enableCrossOsArchive: true
 
+      - name: Build the GPLv2 plantuml
+        run: |
+          CI=true ./gradlew plantuml-gplv2:build -x test
+          VERSION=$(grep 'version =' gradle.properties | cut -d' ' -f 3     )
+          echo VERSION $VERSION
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+        shell: bash
+
       - name: Generate GraalVM configuration
+        shell: bash
         run: |
           mkdir native-image-config-dir
-          echo 'Bob->Alice: Hello' | java -agentlib:native-image-agent=config-output-dir=native-image-config-dir -jar "./build/libs/plantuml-${{ inputs.release-version }}.jar" -tpng -pipe > out.png
+          echo 'Bob->Alice: Hello' | java -agentlib:native-image-agent=config-output-dir=native-image-config-dir -jar "./plantuml-gplv2/build/libs/plantuml-gplv2-${{ env.VERSION }}.jar" -tpng -pipe > out.png
 
       - name: Generate native image
         run: |
-          native-image -H:ConfigurationFileDirectories=native-image-config-dir --no-fallback --report-unsupported-elements-at-runtime -jar "build/libs/plantuml-${{ inputs.release-version }}.jar" -H:Path="build/libs" -H:Name="plantuml-${{ matrix.platform }}-${{ inputs.release-version }}"
+          native-image -H:ConfigurationFileDirectories=native-image-config-dir --no-fallback --report-unsupported-elements-at-runtime -jar "./plantuml-gplv2/build/libs/plantuml-gplv2-${{ env.VERSION }}.jar" -H:Path="plantuml" -H:Name="plantuml-${{ matrix.platform }}-${{ env.VERSION }}"
+
+      - name: Archive Release
+        uses: thedoctor0/zip-release@0.7.5
+        with:
+          type: 'zip'
+          filename: "plantuml-${{ matrix.platform }}-${{ env.VERSION }}.zip"
+          directory: plantuml
+
+      - name: Upload binaries to release
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: "plantuml-${{ matrix.platform }}-${{ env.VERSION }}.zip"
+          tag: ${{ env.VERSION }}
+          overwrite: true
+          make_latest: true
 
       - name: Cache native image
         uses: actions/cache/save@v4
